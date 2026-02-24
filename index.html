@@ -494,6 +494,28 @@ def run_analysis(nums_json, user_code, window=4):
 // ── Default user-editable function ────────────────────────────────────────────
 const DEFAULT_PY = `\
 def subset_sum_ordering(nums):
+    """
+    Given a list of positive integers, returns (partition, radices).
+
+    partition: groups of the sorted input in ascending order. The last group
+               (largest elements) is the most significant position in the
+               mixed-radix scheme.
+    radices:   2^(group size) for each group -- the digit alphabet size per position.
+
+    Encoding a subset S as a digit tuple (d_0, ..., d_{k-1}), where d_i is the
+    rank (by group-sum) of the elements of S drawn from group i, produces a
+    total order over all subsets consistent with subset-sum ordering: if
+    sum(S1) < sum(S2) then lex(S1) < lex(S2) (comparing right-to-left, i.e.
+    the last group is most significant).
+
+    Groups are cut greedily: a new group starts after element k when
+        sum(sorted[0..k]) < sorted[k+1]
+    This ensures no combination of elements from earlier groups can reach or
+    exceed any nonempty selection from a later group, making the digit at each
+    position unambiguously more significant than all positions to its left.
+    This is a generalisation of the super-increasing property: a fully
+    super-increasing sequence produces all singleton groups (pure binary encoding).
+    """
     if not nums:
         return [], []
 
