@@ -55,6 +55,50 @@
       flex-shrink: 0;
     }
 
+    /* ── Saved versions toolbar ── */
+    .versions-bar {
+      padding: 5px 10px;
+      background: #131e30;
+      border-bottom: 1px solid #0f3460;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .versions-bar select {
+      flex: 1;
+      min-width: 0;
+      background: #111828;
+      border: 1px solid #1e3a5f;
+      color: #d0d0d0;
+      padding: 3px 7px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-family: monospace;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .versions-bar select:focus { border-color: #4a90d9; }
+
+    .ver-btn {
+      background: #1e3a5f;
+      color: #a8d8ff;
+      border: 1px solid #2a5080;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .ver-btn:hover { background: #2a5080; }
+    .ver-btn.danger { border-color: #5a2020; color: #e74c3c; }
+    .ver-btn.danger:hover { background: #3a1010; }
+
     #editor-mount {
       flex: 1;
       overflow: hidden;
@@ -255,6 +299,14 @@
 <div class="workspace">
   <div class="pane-editor">
     <div class="pane-label">def subset_sum_ordering(nums: list[int]) → (partition, radices)</div>
+    <div class="versions-bar">
+      <select id="versions-select">
+        <option value="">— saved versions —</option>
+      </select>
+      <button class="ver-btn" id="ver-load-btn" disabled>Load</button>
+      <button class="ver-btn" id="ver-save-btn">Save…</button>
+      <button class="ver-btn danger" id="ver-delete-btn" disabled>Delete</button>
+    </div>
     <div id="editor-mount"></div>
   </div>
 
@@ -617,6 +669,84 @@ function buildTable(rows, partition) {
 
   return table;
 }
+
+// ── Saved versions (localStorage) ─────────────────────────────────────────────
+const STORAGE_KEY = 'sso_saved_versions';
+
+function loadVersionsFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveVersionsToStorage(versions) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(versions));
+}
+
+function refreshVersionsSelect() {
+  const versions = loadVersionsFromStorage();
+  const sel = document.getElementById('versions-select');
+  const current = sel.value;
+  // Rebuild options
+  sel.innerHTML = '<option value="">— saved versions —</option>';
+  for (const name of Object.keys(versions).sort()) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  // Restore selection if it still exists
+  if (current && versions[current]) sel.value = current;
+  updateVersionButtons();
+}
+
+function updateVersionButtons() {
+  const sel = document.getElementById('versions-select');
+  const hasSelection = sel.value !== '';
+  document.getElementById('ver-load-btn').disabled = !hasSelection;
+  document.getElementById('ver-delete-btn').disabled = !hasSelection;
+}
+
+document.getElementById('versions-select').addEventListener('change', updateVersionButtons);
+
+document.getElementById('ver-save-btn').addEventListener('click', () => {
+  const name = prompt('Version name:');
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim();
+  const versions = loadVersionsFromStorage();
+  if (versions[trimmed] && !confirm(`Overwrite version "${trimmed}"?`)) return;
+  versions[trimmed] = editor.getValue();
+  saveVersionsToStorage(versions);
+  refreshVersionsSelect();
+  // Select the newly saved version
+  document.getElementById('versions-select').value = trimmed;
+  updateVersionButtons();
+});
+
+document.getElementById('ver-load-btn').addEventListener('click', () => {
+  const name = document.getElementById('versions-select').value;
+  if (!name) return;
+  const versions = loadVersionsFromStorage();
+  if (versions[name] !== undefined) {
+    editor.setValue(versions[name]);
+    editor.focus();
+  }
+});
+
+document.getElementById('ver-delete-btn').addEventListener('click', () => {
+  const name = document.getElementById('versions-select').value;
+  if (!name) return;
+  if (!confirm(`Delete version "${name}"?`)) return;
+  const versions = loadVersionsFromStorage();
+  delete versions[name];
+  saveVersionsToStorage(versions);
+  refreshVersionsSelect();
+});
+
+// Populate the dropdown on load (editor always starts with DEFAULT_PY)
+refreshVersionsSelect();
 </script>
 </body>
 </html>
