@@ -280,6 +280,57 @@
       letter-spacing: 4px;
     }
 
+    /* ── Toggle switch ── */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      margin-left: 4px;
+    }
+
+    .toggle-wrap label {
+      font-size: 0.82rem;
+      color: #607090;
+      cursor: pointer;
+    }
+
+    .toggle {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: #1e3a5f;
+      border: 1px solid #2a5080;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      left: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: #607090;
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+
+    .toggle input:checked + .toggle-slider { background: #1e3a5f; border-color: #4a90d9; }
+    .toggle input:checked + .toggle-slider::before { transform: translate(16px, -50%); background: #4a90d9; }
+
     .error-box {
       background: #2a0e0e;
       border-left: 3px solid #c0392b;
@@ -315,6 +366,13 @@
       <label>Input</label>
       <input id="nums" type="text" value="1, 20, 5, 6, 2" spellcheck="false">
       <button id="run-btn" disabled>Loading…</button>
+      <div class="toggle-wrap">
+        <label for="show-all-toggle">All rows</label>
+        <label class="toggle">
+          <input type="checkbox" id="show-all-toggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
     <div id="output-scroll">
       <div class="summary loading" id="pyodide-status">Loading Python (Pyodide)…</div>
@@ -406,7 +464,7 @@ def run_analysis(nums_json, user_code, window=4):
         return json.dumps({
             "partition": partition, "radices": radices,
             "total_subsets": len(rows), "violation_count": 0,
-            "valid": True, "windows": []
+            "valid": True, "windows": [], "all_rows": rows
         })
 
     # Expand each violation into a ±window neighbourhood, then group contiguous rows
@@ -429,7 +487,7 @@ def run_analysis(nums_json, user_code, window=4):
     return json.dumps({
         "partition": partition, "radices": radices,
         "total_subsets": len(rows), "violation_count": viol_count,
-        "valid": False, "windows": windows
+        "valid": False, "windows": windows, "all_rows": rows
     })
 `;
 
@@ -510,6 +568,7 @@ async function runAnalysis() {
 
   const nums = parseNums(document.getElementById('nums').value);
   if (nums.length === 0)                          return renderError('Enter at least one number.');
+  if (nums.length > 8)                            return renderError('Input is limited to 8 numbers (max 256 subsets per group).');
   if (nums.some(n => !Number.isInteger(n) || n <= 0)) return renderError('All values must be strictly positive integers.');
 
   pyodide.globals.set('_nums_json',  JSON.stringify(nums));
@@ -524,11 +583,17 @@ async function runAnalysis() {
 
   const result = JSON.parse(raw);
   if (result.error) return renderError(result.error);
+  lastResult = result;
   renderResult(result);
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────────
 const outputScroll = document.getElementById('output-scroll');
+let lastResult = null;
+
+document.getElementById('show-all-toggle').addEventListener('change', () => {
+  if (lastResult) renderResult(lastResult);
+});
 
 function clearOutput() {
   outputScroll.innerHTML = '';
@@ -583,28 +648,38 @@ function renderResult(result) {
     : `✗  ${result.violation_count} violation${result.violation_count !== 1 ? 's' : ''} found across ${result.total_subsets} subsets`;
   outputScroll.appendChild(summary);
 
-  // Violation windows
-  result.windows.forEach((win, wi) => {
+  const showAll = document.getElementById('show-all-toggle').checked;
+
+  if (showAll) {
+    // Show all rows in a single table
     const section = document.createElement('div');
     section.className = 'window-section';
-
-    const lbl = document.createElement('div');
-    lbl.className = 'window-label';
-    const nv = win.filter(r => r.violation).length;
-    lbl.textContent = `rows ${win[0].index}–${win[win.length-1].index}  ·  ${nv} violation${nv !== 1 ? 's' : ''}`;
-    section.appendChild(lbl);
-
-    section.appendChild(buildTable(win, result.partition));
-
-    if (wi < result.windows.length - 1) {
-      const gap = document.createElement('div');
-      gap.className = 'window-gap';
-      gap.textContent = '· · ·';
-      section.appendChild(gap);
-    }
-
+    section.appendChild(buildTable(result.all_rows, result.partition));
     outputScroll.appendChild(section);
-  });
+  } else {
+    // Show only windows around violations
+    result.windows.forEach((win, wi) => {
+      const section = document.createElement('div');
+      section.className = 'window-section';
+
+      const lbl = document.createElement('div');
+      lbl.className = 'window-label';
+      const nv = win.filter(r => r.violation).length;
+      lbl.textContent = `rows ${win[0].index}–${win[win.length-1].index}  ·  ${nv} violation${nv !== 1 ? 's' : ''}`;
+      section.appendChild(lbl);
+
+      section.appendChild(buildTable(win, result.partition));
+
+      if (wi < result.windows.length - 1) {
+        const gap = document.createElement('div');
+        gap.className = 'window-gap';
+        gap.textContent = '· · ·';
+        section.appendChild(gap);
+      }
+
+      outputScroll.appendChild(section);
+    });
+  }
 }
 
 function buildTable(rows, partition) {
