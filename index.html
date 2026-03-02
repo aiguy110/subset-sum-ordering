@@ -433,29 +433,35 @@ def run_analysis(nums_json, user_code, window=4):
     rows = []
     prev_sum = None
 
-    # Iterate mixed-radix strings with the last group (largest elements) as MSB.
-    # product over reversed radices gives (d_{k-1}, ..., d_0) in lex order.
-    for i, digits_msb_first in enumerate(
-        product(*(range(radices[j]) for j in range(k - 1, -1, -1)))
-    ):
-        digits = list(digits_msb_first[::-1])   # digits[g] <-> partition[g]
-        s = sum(digit_maps[g][digits[g]][0] for g in range(k))
+    # Sweep ordering: enumerate inclusion patterns (each group excluded or
+    # included) in MSB-first lex order, then within each pattern sweep all
+    # non-zero digit values for included groups with LSB group varying fastest.
+    i = 0
+    for pattern_bits in product(*([range(2)] * k)):
+        bits = pattern_bits[::-1]  # bits[g] = 1 if group g is included
+        ranges = []
+        for g in range(k - 1, -1, -1):
+            ranges.append(range(1, radices[g]) if bits[g] else range(1))
+        for combo_msb_first in product(*ranges):
+            digits = list(combo_msb_first[::-1])   # digits[g] <-> partition[g]
+            s = sum(digit_maps[g][digits[g]][0] for g in range(k))
 
-        subset = []
-        for g in range(k):
-            mask = digit_maps[g][digits[g]][1]
-            for b in range(len(partition[g])):
-                if mask >> b & 1:
-                    subset.append(partition[g][b])
+            subset = []
+            for g in range(k):
+                mask = digit_maps[g][digits[g]][1]
+                for b in range(len(partition[g])):
+                    if mask >> b & 1:
+                        subset.append(partition[g][b])
 
-        delta     = (s - prev_sum) if prev_sum is not None else None
-        violation = prev_sum is not None and s < prev_sum
+            delta     = (s - prev_sum) if prev_sum is not None else None
+            violation = prev_sum is not None and s < prev_sum
 
-        rows.append({
-            "index": i, "digits": digits, "subset": subset,
-            "sum": s, "delta": delta, "violation": violation,
-        })
-        prev_sum = s
+            rows.append({
+                "index": i, "digits": digits, "subset": subset,
+                "sum": s, "delta": delta, "violation": violation,
+            })
+            prev_sum = s
+            i += 1
 
     viol_idxs = {r["index"] for r in rows if r["violation"]}
     viol_count = len(viol_idxs)

@@ -64,9 +64,13 @@ def verify(partition, radices):
     """
     Verify that the (partition, radices) encoding is sum-order-consistent.
 
-    Iterates every mixed-radix digit tuple in lex order with the last group as
-    most significant, computes the corresponding subset sum, and checks it never
-    decreases.
+    Iterates every digit tuple using "sweep" ordering: for each inclusion
+    pattern (each group either excluded=digit 0, or included=digit>0),
+    enumerated in MSB-first lex order, then within each pattern sweeps all
+    non-zero digit values for included groups with the LSB group varying
+    fastest.  When a multi-element group is first included it is incremented
+    all the way through its non-zero values before the enclosing positions
+    advance.
 
     Returns (True, None) on success, or (False, diagnostic_dict) on the first
     violation found.
@@ -77,23 +81,35 @@ def verify(partition, radices):
 
     digit_maps = [build_digit_map(g) for g in partition]
 
-    # product over reversed radices gives (d_{k-1}, ..., d_0) in lex order,
-    # i.e. the largest group varies slowest (most significant).
     prev_sum = None
-    for i, digits_msb_first in enumerate(
-        product(*(range(radices[j]) for j in range(k - 1, -1, -1)))
-    ):
-        digits = digits_msb_first[::-1]  # align: digits[i] <-> partition[i]
-        total = sum(digit_maps[g][digits[g]][0] for g in range(k))
+    i = 0
+    # Enumerate inclusion patterns: each bit says whether group g is included
+    # (digit > 0).  Patterns are in MSB-first lex order so the largest group
+    # varies slowest, matching the overall mixed-radix significance ordering.
+    for pattern_bits in product(*([range(2)] * k)):
+        # pattern_bits[j] is the inclusion bit for group (k-1-j); reverse to
+        # index by group number.
+        bits = pattern_bits[::-1]  # bits[g] = 1 if group g is included
 
-        if prev_sum is not None and total < prev_sum:
-            return False, {
-                "at_index": i,
-                "digits": digits,
-                "sum": total,
-                "prev_sum": prev_sum,
-            }
-        prev_sum = total
+        # Build the range of digit values for each group in MSB-first order so
+        # the inner product keeps the LSB group varying fastest.
+        ranges = []
+        for g in range(k - 1, -1, -1):
+            ranges.append(range(1, radices[g]) if bits[g] else range(1))
+
+        for combo_msb_first in product(*ranges):
+            digits = combo_msb_first[::-1]  # align: digits[g] <-> partition[g]
+            total = sum(digit_maps[g][digits[g]][0] for g in range(k))
+
+            if prev_sum is not None and total < prev_sum:
+                return False, {
+                    "at_index": i,
+                    "digits": digits,
+                    "sum": total,
+                    "prev_sum": prev_sum,
+                }
+            prev_sum = total
+            i += 1
 
     return True, None
 
