@@ -367,6 +367,13 @@
       <input id="nums" type="text" value="1, 20, 5, 6, 2" spellcheck="false">
       <button id="run-btn" disabled>Loading…</button>
       <div class="toggle-wrap">
+        <label for="lex-order-toggle">Std. Lex Order</label>
+        <label class="toggle">
+          <input type="checkbox" id="lex-order-toggle" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-wrap">
         <label for="show-all-toggle">All rows</label>
         <label class="toggle">
           <input type="checkbox" id="show-all-toggle">
@@ -423,77 +430,80 @@ def run_analysis(nums_json, user_code, window=4):
         return json.dumps({"error": f"{total_subsets} subsets exceeds the 65536 cap (input too large)"})
 
     k = len(partition)
+    _empty_mode = {"violation_count": 0, "valid": True, "windows": [], "all_rows": []}
     if k == 0:
         return json.dumps({
             "partition": [], "radices": [], "total_subsets": 1,
-            "violation_count": 0, "valid": True, "windows": []
+            "lex": _empty_mode, "sweep": _empty_mode,
         })
 
     digit_maps = [_build_digit_map(g) for g in partition]
-    rows = []
-    prev_sum = None
 
-    # Sweep ordering: enumerate inclusion patterns (each group excluded or
-    # included) in MSB-first lex order, then within each pattern sweep all
-    # non-zero digit values for included groups with LSB group varying fastest.
-    i = 0
-    for pattern_bits in product(*([range(2)] * k)):
-        bits = pattern_bits[::-1]  # bits[g] = 1 if group g is included
-        ranges = []
-        for g in range(k - 1, -1, -1):
-            ranges.append(range(1, radices[g]) if bits[g] else range(1))
-        for combo_msb_first in product(*ranges):
-            digits = list(combo_msb_first[::-1])   # digits[g] <-> partition[g]
-            s = sum(digit_maps[g][digits[g]][0] for g in range(k))
+    def _make_row(i, digits, prev_sum):
+        s = sum(digit_maps[g][digits[g]][0] for g in range(k))
+        subset = []
+        for g in range(k):
+            mask = digit_maps[g][digits[g]][1]
+            for b in range(len(partition[g])):
+                if mask >> b & 1:
+                    subset.append(partition[g][b])
+        delta = (s - prev_sum) if prev_sum is not None else None
+        return {"index": i, "digits": digits, "subset": subset,
+                "sum": s, "delta": delta, "violation": prev_sum is not None and s < prev_sum}
 
-            subset = []
-            for g in range(k):
-                mask = digit_maps[g][digits[g]][1]
-                for b in range(len(partition[g])):
-                    if mask >> b & 1:
-                        subset.append(partition[g][b])
+    def _build_rows_lex():
+        rows, prev_sum = [], None
+        for i, digits_msb_first in enumerate(
+            product(*(range(radices[j]) for j in range(k - 1, -1, -1)))
+        ):
+            digits = list(digits_msb_first[::-1])
+            row = _make_row(i, digits, prev_sum)
+            rows.append(row)
+            prev_sum = row["sum"]
+        return rows
 
-            delta     = (s - prev_sum) if prev_sum is not None else None
-            violation = prev_sum is not None and s < prev_sum
+    def _build_rows_sweep():
+        # Enumerate inclusion patterns (each group excluded or included) in
+        # MSB-first lex order, then sweep all non-zero digit values for
+        # included groups with LSB group varying fastest.
+        rows, prev_sum, i = [], None, 0
+        for pattern_bits in product(*([range(2)] * k)):
+            bits = pattern_bits[::-1]  # bits[g] = 1 if group g is included
+            ranges = []
+            for g in range(k - 1, -1, -1):
+                ranges.append(range(1, radices[g]) if bits[g] else range(1))
+            for combo_msb_first in product(*ranges):
+                digits = list(combo_msb_first[::-1])
+                row = _make_row(i, digits, prev_sum)
+                rows.append(row)
+                prev_sum = row["sum"]
+                i += 1
+        return rows
 
-            rows.append({
-                "index": i, "digits": digits, "subset": subset,
-                "sum": s, "delta": delta, "violation": violation,
-            })
-            prev_sum = s
-            i += 1
-
-    viol_idxs = {r["index"] for r in rows if r["violation"]}
-    viol_count = len(viol_idxs)
-
-    if not viol_idxs:
-        return json.dumps({
-            "partition": partition, "radices": radices,
-            "total_subsets": len(rows), "violation_count": 0,
-            "valid": True, "windows": [], "all_rows": rows
-        })
-
-    # Expand each violation into a ±window neighbourhood, then group contiguous rows
-    in_win = set()
-    for vi in viol_idxs:
-        for j in range(max(0, vi - window), min(len(rows), vi + window + 1)):
-            in_win.add(j)
-
-    sorted_idxs = sorted(in_win)
-    windows, cur = [], []
-    for idx in sorted_idxs:
-        if not cur or idx == cur[-1] + 1:
-            cur.append(idx)
-        else:
+    def _pack(rows):
+        viol_idxs = {r["index"] for r in rows if r["violation"]}
+        if not viol_idxs:
+            return {"violation_count": 0, "valid": True, "windows": [], "all_rows": rows}
+        in_win = set()
+        for vi in viol_idxs:
+            for j in range(max(0, vi - window), min(len(rows), vi + window + 1)):
+                in_win.add(j)
+        sorted_idxs = sorted(in_win)
+        windows, cur = [], []
+        for idx in sorted_idxs:
+            if not cur or idx == cur[-1] + 1:
+                cur.append(idx)
+            else:
+                windows.append([rows[x] for x in cur])
+                cur = [idx]
+        if cur:
             windows.append([rows[x] for x in cur])
-            cur = [idx]
-    if cur:
-        windows.append([rows[x] for x in cur])
+        return {"violation_count": len(viol_idxs), "valid": False, "windows": windows, "all_rows": rows}
 
     return json.dumps({
-        "partition": partition, "radices": radices,
-        "total_subsets": len(rows), "violation_count": viol_count,
-        "valid": False, "windows": windows, "all_rows": rows
+        "partition": partition, "radices": radices, "total_subsets": total_subsets,
+        "lex":   _pack(_build_rows_lex()),
+        "sweep": _pack(_build_rows_sweep()),
     })
 `;
 
@@ -623,6 +633,10 @@ document.getElementById('show-all-toggle').addEventListener('change', () => {
   if (lastResult) renderResult(lastResult);
 });
 
+document.getElementById('lex-order-toggle').addEventListener('change', () => {
+  if (lastResult) renderResult(lastResult);
+});
+
 function clearOutput() {
   outputScroll.innerHTML = '';
 }
@@ -637,6 +651,9 @@ function renderError(msg) {
 
 function renderResult(result) {
   clearOutput();
+
+  const useLex = document.getElementById('lex-order-toggle').checked;
+  const mode = useLex ? result.lex : result.sweep;
 
   // Partition chips + radix labels
   if (result.partition.length > 0) {
@@ -670,10 +687,10 @@ function renderResult(result) {
 
   // Summary banner
   const summary = document.createElement('div');
-  summary.className = `summary ${result.valid ? 'valid' : 'invalid'}`;
-  summary.textContent = result.valid
+  summary.className = `summary ${mode.valid ? 'valid' : 'invalid'}`;
+  summary.textContent = mode.valid
     ? `✓  All ${result.total_subsets} subsets in non-decreasing sum order`
-    : `✗  ${result.violation_count} violation${result.violation_count !== 1 ? 's' : ''} found across ${result.total_subsets} subsets`;
+    : `✗  ${mode.violation_count} violation${mode.violation_count !== 1 ? 's' : ''} found across ${result.total_subsets} subsets`;
   outputScroll.appendChild(summary);
 
   const showAll = document.getElementById('show-all-toggle').checked;
@@ -682,11 +699,11 @@ function renderResult(result) {
     // Show all rows in a single table
     const section = document.createElement('div');
     section.className = 'window-section';
-    section.appendChild(buildTable(result.all_rows, result.partition));
+    section.appendChild(buildTable(mode.all_rows, result.partition));
     outputScroll.appendChild(section);
   } else {
     // Show only windows around violations
-    result.windows.forEach((win, wi) => {
+    mode.windows.forEach((win, wi) => {
       const section = document.createElement('div');
       section.className = 'window-section';
 
@@ -698,7 +715,7 @@ function renderResult(result) {
 
       section.appendChild(buildTable(win, result.partition));
 
-      if (wi < result.windows.length - 1) {
+      if (wi < mode.windows.length - 1) {
         const gap = document.createElement('div');
         gap.className = 'window-gap';
         gap.textContent = '· · ·';
